@@ -108,6 +108,29 @@ INSERT INTO dersler (ad, kod) VALUES
 ('Python Programlama', 'PY101')
 ON DUPLICATE KEY UPDATE ad = VALUES(ad);
 
+-- Test Öğretmen (Şifre: 123456)
+-- bcrypt hash for '123456': $2b$12$LQv3c1yqBWVHxkd0LHAkCOYz0PtwNJ6kJsQzGJGpC6x5cHjO1z0Gy
+INSERT INTO kullanicilar (email, sifre_hash, ad_soyad, rol, onaylandi) VALUES
+('ogretmen@okul.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz0PtwNJ6kJsQzGJGpC6x5cHjO1z0Gy', 'Ahmet Öğretmen', 'ogretmen', TRUE)
+ON DUPLICATE KEY UPDATE ad_soyad = ad_soyad;
+
+-- Test Öğrenci (Şifre: 123456)
+INSERT INTO kullanicilar (email, sifre_hash, ad_soyad, rol, onaylandi) VALUES
+('ogrenci@okul.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz0PtwNJ6kJsQzGJGpC6x5cHjO1z0Gy', 'Mehmet Öğrenci', 'ogrenci', TRUE)
+ON DUPLICATE KEY UPDATE ad_soyad = ad_soyad;
+
+-- Öğretmene ders ata (Java ve Python)
+UPDATE dersler SET ogretmen_id = (SELECT id FROM kullanicilar WHERE email = 'ogretmen@okul.com') 
+WHERE kod IN ('JAVA101', 'PY101');
+
+-- Öğrenciyi derslere kaydet
+INSERT INTO kayitlar (ogrenci_id, ders_id)
+SELECT 
+    (SELECT id FROM kullanicilar WHERE email = 'ogrenci@okul.com'),
+    id
+FROM dersler WHERE kod IN ('JAVA101', 'PY101')
+ON DUPLICATE KEY UPDATE kayit_tarihi = kayit_tarihi;
+
 -- =====================================================
 -- YARDIMCI GÖRÜNÜMLER (VIEWS)
 -- =====================================================

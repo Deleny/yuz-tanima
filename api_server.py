@@ -943,6 +943,306 @@ def get_teachers():
 
 
 
+# ==================== ÖĞRETMEN ENDPOINTLERİ ====================
+
+@app.route("/ogretmen/derslerim", methods=["GET"])
+@token_required
+@role_required("ogretmen")
+def get_teacher_courses():
+    """Öğretmenin kendi derslerini listele"""
+    ogretmen_id = request.kullanici["id"]
+    
+    dersler = query_db("""
+        SELECT d.id, d.ad, d.kod,
+               (SELECT COUNT(*) FROM kayitlar WHERE ders_id = d.id) as ogrenci_sayisi,
+               (SELECT COUNT(*) FROM yoklama_oturumlari WHERE ders_id = d.id AND aktif = TRUE) as aktif_oturum
+        FROM dersler d
+        WHERE d.ogretmen_id = %s
+        ORDER BY d.ad
+    """, (ogretmen_id,))
+    
+    return jsonify({
+        "basarili": True,
+        "dersler": [{
+            "id": d["id"],
+            "ad": d["ad"],
+            "kod": d["kod"],
+            "ogrenci_sayisi": d["ogrenci_sayisi"],
+            "aktif_oturum": d["aktif_oturum"] > 0
+        } for d in dersler]
+    })
+
+
+@app.route("/ogretmen/yoklama/baslat", methods=["POST"])
+@token_required
+@role_required("ogretmen")
+def teacher_start_attendance():
+    """Öğretmen için yoklama başlat"""
+    ogretmen_id = request.kullanici["id"]
+    data = request.get_json() or {}
+    ders_id = data.get("ders_id")
+    
+    if not ders_id:
+        return jsonify({"basarili": False, "hata": "Ders ID gerekli"}), 400
+    
+    # Dersin bu öğretmene ait olduğunu kontrol et
+    ders = query_db("SELECT id, ad FROM dersler WHERE id = %s AND ogretmen_id = %s", 
+                    (ders_id, ogretmen_id), one=True)
+    if not ders:
+        return jsonify({"basarili": False, "hata": "Bu ders size ait değil"}), 403
+    
+    # Aktif oturum var mı kontrol et
+    aktif = query_db("SELECT id FROM yoklama_oturumlari WHERE ders_id = %s AND aktif = TRUE", 
+                     (ders_id,), one=True)
+    if aktif:
+        return jsonify({"basarili": False, "hata": "Bu dersin zaten aktif bir yoklaması var"}), 400
+    
+    # Yeni oturum oluştur
+    oturum_id = query_db(
+        "INSERT INTO yoklama_oturumlari (ders_id, aktif) VALUES (%s, TRUE)",
+        (ders_id,), commit=True
+    )
+    
+    return jsonify({
+        "basarili": True,
+        "mesaj": f"{ders['ad']} için yoklama başlatıldı",
+        "oturum_id": oturum_id
+    })
+
+
+@app.route("/ogretmen/yoklama/bitir", methods=["POST"])
+@token_required
+@role_required("ogretmen")
+def teacher_end_attendance():
+    """Öğretmen için yoklama bitir"""
+    ogretmen_id = request.kullanici["id"]
+    data = request.get_json() or {}
+    oturum_id = data.get("oturum_id")
+    
+    if not oturum_id:
+        return jsonify({"basarili": False, "hata": "Oturum ID gerekli"}), 400
+    
+    # Oturumun bu öğretmene ait olduğunu kontrol et
+    oturum = query_db("""
+        SELECT yo.id, d.ad as ders_adi
+        FROM yoklama_oturumlari yo
+        JOIN dersler d ON yo.ders_id = d.id
+        WHERE yo.id = %s AND d.ogretmen_id = %s AND yo.aktif = TRUE
+    """, (oturum_id, ogretmen_id), one=True)
+    
+    if not oturum:
+        return jsonify({"basarili": False, "hata": "Aktif oturum bulunamadı"}), 404
+    
+    # Oturumu kapat
+    query_db(
+        "UPDATE yoklama_oturumlari SET aktif = FALSE, bitis_tarihi = NOW() WHERE id = %s",
+        (oturum_id,), commit=True
+    )
+    
+    # Katılımcı sayısını getir
+    katilimci_sayisi = query_db(
+        "SELECT COUNT(*) as sayi FROM yoklamalar WHERE oturum_id = %s",
+        (oturum_id,), one=True
+    )["sayi"]
+    
+    return jsonify({
+        "basarili": True,
+        "mesaj": f"{oturum['ders_adi']} yoklaması bitirildi",
+        "katilimci_sayisi": katilimci_sayisi
+    })
+
+
+@app.route("/ogretmen/yoklama/aktif", methods=["GET"])
+@token_required
+@role_required("ogretmen")
+def teacher_active_attendance():
+    """Öğretmenin aktif yoklaması ve katılımcıları"""
+    ogretmen_id = request.kullanici["id"]
+    
+    # Aktif oturumu bul
+    oturum = query_db("""
+        SELECT yo.id as oturum_id, yo.baslangic_tarihi, d.id as ders_id, d.ad as ders_adi
+        FROM yoklama_oturumlari yo
+        JOIN dersler d ON yo.ders_id = d.id
+        WHERE d.ogretmen_id = %s AND yo.aktif = TRUE
+        LIMIT 1
+    """, (ogretmen_id,), one=True)
+    
+    if not oturum:
+        return jsonify({"basarili": True, "aktif_oturum": None})
+    
+    # Katılımcıları getir
+    katilimcilar = query_db("""
+        SELECT k.ad_soyad, y.katilim_tarihi, y.yuz_dogrulandi
+        FROM yoklamalar y
+        JOIN kullanicilar k ON y.ogrenci_id = k.id
+        WHERE y.oturum_id = %s
+        ORDER BY y.katilim_tarihi DESC
+    """, (oturum["oturum_id"],))
+    
+    return jsonify({
+        "basarili": True,
+        "aktif_oturum": {
+            "oturum_id": oturum["oturum_id"],
+            "ders_id": oturum["ders_id"],
+            "ders_adi": oturum["ders_adi"],
+            "baslangic": oturum["baslangic_tarihi"].isoformat() if oturum["baslangic_tarihi"] else None,
+            "katilimci_sayisi": len(katilimcilar),
+            "katilimcilar": [{
+                "ad_soyad": k["ad_soyad"],
+                "saat": k["katilim_tarihi"].strftime("%H:%M") if k["katilim_tarihi"] else None,
+                "yuz_dogrulandi": bool(k["yuz_dogrulandi"])
+            } for k in katilimcilar]
+        }
+    })
+
+
+# ==================== ÖĞRENCİ ENDPOINTLERİ ====================
+
+@app.route("/ogrenci/derslerim", methods=["GET"])
+@token_required
+@role_required("ogrenci")
+def get_student_courses():
+    """Öğrencinin kayıtlı olduğu dersler"""
+    ogrenci_id = request.kullanici["id"]
+    
+    dersler = query_db("""
+        SELECT d.id, d.ad, d.kod, k.ad_soyad as ogretmen_adi
+        FROM kayitlar ky
+        JOIN dersler d ON ky.ders_id = d.id
+        LEFT JOIN kullanicilar k ON d.ogretmen_id = k.id
+        WHERE ky.ogrenci_id = %s
+        ORDER BY d.ad
+    """, (ogrenci_id,))
+    
+    return jsonify({"basarili": True, "dersler": dersler})
+
+
+@app.route("/ogrenci/aktif-yoklamalar", methods=["GET"])
+@token_required
+@role_required("ogrenci")
+def get_student_active_sessions():
+    """Öğrencinin katılabileceği aktif yoklamalar"""
+    ogrenci_id = request.kullanici["id"]
+    
+    # Öğrencinin kayıtlı olduğu derslerdeki aktif yoklamaları getir
+    aktif_yoklamalar = query_db("""
+        SELECT yo.id as oturum_id, d.id as ders_id, d.ad as ders_adi, 
+               d.kod as ders_kodu, yo.baslangic_tarihi,
+               k.ad_soyad as ogretmen_adi
+        FROM yoklama_oturumlari yo
+        JOIN dersler d ON yo.ders_id = d.id
+        JOIN kayitlar ky ON d.id = ky.ders_id
+        LEFT JOIN kullanicilar k ON d.ogretmen_id = k.id
+        WHERE ky.ogrenci_id = %s AND yo.aktif = TRUE
+    """, (ogrenci_id,))
+    
+    # Öğrencinin zaten katıldığı oturumları kontrol et
+    result = []
+    for y in aktif_yoklamalar:
+        katildi = query_db(
+            "SELECT id FROM yoklamalar WHERE oturum_id = %s AND ogrenci_id = %s",
+            (y["oturum_id"], ogrenci_id), one=True
+        )
+        result.append({
+            "oturum_id": y["oturum_id"],
+            "ders_id": y["ders_id"],
+            "ders_adi": y["ders_adi"],
+            "ders_kodu": y["ders_kodu"],
+            "ogretmen_adi": y["ogretmen_adi"],
+            "baslangic": y["baslangic_tarihi"].isoformat() if y["baslangic_tarihi"] else None,
+            "katildi": katildi is not None
+        })
+    
+    return jsonify({"basarili": True, "yoklamalar": result})
+
+
+@app.route("/ogrenci/yoklama/katil", methods=["POST"])
+@token_required
+@role_required("ogrenci")
+def student_join_attendance():
+    """Öğrenci yüz doğrulaması ile yoklamaya katıl"""
+    ogrenci_id = request.kullanici["id"]
+    oturum_id = request.form.get("oturum_id")
+    
+    if not oturum_id:
+        return jsonify({"basarili": False, "hata": "Oturum ID gerekli"}), 400
+    
+    if "image" not in request.files:
+        return jsonify({"basarili": False, "hata": "Yüz resmi gerekli"}), 400
+    
+    # Oturumun aktif ve öğrencinin kayıtlı olduğunu kontrol et
+    oturum = query_db("""
+        SELECT yo.id, d.ad as ders_adi
+        FROM yoklama_oturumlari yo
+        JOIN dersler d ON yo.ders_id = d.id
+        JOIN kayitlar ky ON d.id = ky.ders_id
+        WHERE yo.id = %s AND yo.aktif = TRUE AND ky.ogrenci_id = %s
+    """, (oturum_id, ogrenci_id), one=True)
+    
+    if not oturum:
+        return jsonify({"basarili": False, "hata": "Aktif oturum bulunamadı veya bu derse kayıtlı değilsiniz"}), 404
+    
+    # Zaten katıldı mı?
+    zaten_katildi = query_db(
+        "SELECT id FROM yoklamalar WHERE oturum_id = %s AND ogrenci_id = %s",
+        (oturum_id, ogrenci_id), one=True
+    )
+    if zaten_katildi:
+        return jsonify({"basarili": False, "hata": "Bu yoklamaya zaten katıldınız"}), 400
+    
+    # Öğrencinin kayıtlı yüzünü al
+    ogrenci = query_db("SELECT yuz_encoding FROM kullanicilar WHERE id = %s", (ogrenci_id,), one=True)
+    if not ogrenci or not ogrenci["yuz_encoding"]:
+        return jsonify({"basarili": False, "hata": "Yüzünüz kayıtlı değil. Önce yüz kaydı yapın."}), 400
+    
+    kayitli_encoding = pickle.loads(ogrenci["yuz_encoding"])
+    
+    # Gönderilen resmi işle
+    try:
+        resim_dosya = request.files["image"]
+        image_bytes = resim_dosya.read()
+        result = process_image(image_bytes)
+        
+        if result is None:
+            return jsonify({"basarili": False, "hata": "Resim okunamadı"}), 400
+        
+        rgb, _ = result
+        locations = face_recognition.face_locations(rgb)
+        
+        if not locations:
+            return jsonify({"basarili": False, "hata": "Yüz bulunamadı"}), 400
+        
+        gelen_encoding = face_recognition.face_encodings(rgb, locations)[0]
+        
+        # Yüz karşılaştır
+        distance = face_recognition.face_distance([kayitli_encoding], gelen_encoding)[0]
+        
+        if distance > TOLERANCE:
+            return jsonify({
+                "basarili": False, 
+                "hata": "Yüz doğrulanamadı. Kayıtlı yüzünüzle eşleşmiyor."
+            }), 400
+        
+        # Yoklamaya ekle
+        query_db(
+            "INSERT INTO yoklamalar (oturum_id, ogrenci_id, yuz_dogrulandi) VALUES (%s, %s, TRUE)",
+            (oturum_id, ogrenci_id), commit=True
+        )
+        
+        confidence = round((1 - distance) * 100, 1)
+        
+        return jsonify({
+            "basarili": True,
+            "mesaj": f"{oturum['ders_adi']} yoklamasına katıldınız!",
+            "guven_orani": confidence
+        })
+        
+    except Exception as e:
+        print(f"Yoklama katılım hatası: {e}")
+        return jsonify({"basarili": False, "hata": str(e)}), 500
+
+
 # ==================== MOBILE COMPATIBILITY ENDPOINTS ====================
 # Bu endpointler mobil uygulamanın login olmadan test edilebilmesi içindir.
 # İleride mobil uygulamaya login ekranı eklenince kaldırılabilir.

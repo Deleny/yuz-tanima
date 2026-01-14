@@ -1,428 +1,564 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
+  FlatList,
   Platform,
+  RefreshControl,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
-  Alert,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import * as FileSystem from "expo-file-system";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // ==================== CONFIGURATION ====================
-// Sunucu adresi - kendi bilgisayarının IP adresini yaz
-// Windows'ta: ipconfig komutu ile IPv4 adresini bul
-// Örnek: const API_BASE = "http://192.168.1.100:5000";
-const API_BASE = "http://192.168.1.197:5000";
+const API_BASE = "http://3.79.16.211:5000";
 
 const COLORS = {
-  background: "#f7f1e8",
+  background: "#f5f7fa",
   card: "#ffffff",
-  accent: "#14656b",
-  accentDark: "#0f4c4f",
-  text: "#1f2933",
-  muted: "#667085",
-  border: "#e5ddd4",
+  accent: "#3b82f6",
+  accentDark: "#2563eb",
+  text: "#1f2937",
+  muted: "#6b7280",
+  border: "#e5e7eb",
   success: "#22c55e",
   error: "#ef4444",
+  warning: "#f59e0b",
 };
-
-const TITLE_FONT = Platform.select({
-  ios: "AvenirNext-DemiBold",
-  android: "sans-serif-condensed",
-  default: "System",
-});
-
-const BODY_FONT = Platform.select({
-  ios: "AvenirNext-Regular",
-  android: "sans-serif",
-  default: "System",
-});
 
 // ==================== API FUNCTIONS ====================
 
-async function apiRegister(name, imageUri) {
-  const formData = new FormData();
-  formData.append("name", name);
-  formData.append("image", {
-    uri: imageUri,
-    type: "image/jpeg",
-    name: "photo.jpg",
-  });
-
-  const response = await fetch(`${API_BASE}/register`, {
+async function apiLogin(email, password) {
+  const response = await fetch(`${API_BASE}/auth/giris`, {
     method: "POST",
-    body: formData,
-    headers: {
-      "Content-Type": "multipart/form-data",
-    },
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, sifre: password }),
   });
-
   return await response.json();
 }
 
-async function apiRecognize(imageUri) {
+async function apiGetMe(token) {
+  const response = await fetch(`${API_BASE}/auth/ben`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return await response.json();
+}
+
+// Teacher APIs
+async function apiGetTeacherCourses(token) {
+  const response = await fetch(`${API_BASE}/ogretmen/derslerim`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return await response.json();
+}
+
+async function apiStartAttendance(token, courseId) {
+  const response = await fetch(`${API_BASE}/ogretmen/yoklama/baslat`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ ders_id: courseId }),
+  });
+  return await response.json();
+}
+
+async function apiEndAttendance(token, sessionId) {
+  const response = await fetch(`${API_BASE}/ogretmen/yoklama/bitir`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ oturum_id: sessionId }),
+  });
+  return await response.json();
+}
+
+async function apiGetActiveAttendance(token) {
+  const response = await fetch(`${API_BASE}/ogretmen/yoklama/aktif`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return await response.json();
+}
+
+// Student APIs
+async function apiGetStudentActiveSessions(token) {
+  const response = await fetch(`${API_BASE}/ogrenci/aktif-yoklamalar`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return await response.json();
+}
+
+async function apiJoinAttendance(token, sessionId, imageUri) {
+  const formData = new FormData();
+  formData.append("oturum_id", sessionId.toString());
+  formData.append("image", {
+    uri: imageUri,
+    type: "image/jpeg",
+    name: "face.jpg",
+  });
+
+  const response = await fetch(`${API_BASE}/ogrenci/yoklama/katil`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: formData,
+  });
+  return await response.json();
+}
+
+async function apiRegisterFace(token, imageUri) {
   const formData = new FormData();
   formData.append("image", {
     uri: imageUri,
     type: "image/jpeg",
-    name: "photo.jpg",
+    name: "face.jpg",
   });
 
-  const response = await fetch(`${API_BASE}/recognize`, {
+  const response = await fetch(`${API_BASE}/yuz/kayit`, {
     method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
     body: formData,
-    headers: {
-      "Content-Type": "multipart/form-data",
-    },
   });
-
-  return await response.json();
-}
-
-async function apiGetStatus() {
-  const response = await fetch(`${API_BASE}/`);
   return await response.json();
 }
 
 // ==================== SCREENS ====================
 
-// Ana Menü Ekranı
-function HomeScreen({ onRegister, onRecognize, stats }) {
-  return (
-    <View style={styles.homeContainer}>
-      <View style={styles.bgCircle} />
-      <View style={styles.bgCircleAlt} />
+// Login Screen
+function LoginScreen({ onLogin }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
-      <View style={styles.homeContent}>
-        <Text style={styles.homeTitle}>Yuz Tanima</Text>
-        <Text style={styles.homeSubtitle}>Python backend ile yuz tanima</Text>
-
-        <View style={styles.statsCard}>
-          <Text style={styles.statsText}>
-            Kayitli yuz: {stats.samples} | Kisi: {stats.people}
-          </Text>
-          <Text style={[styles.statsText, { marginTop: 4, fontSize: 12 }]}>
-            Sunucu: {stats.connected ? "✅ Bagli" : "❌ Bagli degil"}
-          </Text>
-        </View>
-
-        <TouchableOpacity style={styles.bigButton} onPress={onRegister}>
-          <Text style={styles.bigButtonIcon}>📷</Text>
-          <Text style={styles.bigButtonText}>Yuz Kaydet</Text>
-          <Text style={styles.bigButtonHint}>Yeni bir yuz kaydi olustur</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.bigButton, styles.bigButtonSecondary]}
-          onPress={onRecognize}
-        >
-          <Text style={styles.bigButtonIcon}>🔍</Text>
-          <Text style={[styles.bigButtonText, { color: COLORS.accent }]}>Yuz Tara</Text>
-          <Text style={[styles.bigButtonHint, { color: COLORS.muted }]}>Kayitli yuzleri tani</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-}
-
-// İsim Giriş Ekranı
-function EnterNameScreen({ onSubmit, onBack }) {
-  const [name, setName] = useState("");
-
-  const handleSubmit = () => {
-    const trimmed = name.trim();
-    if (!trimmed) {
-      Alert.alert("Hata", "Lutfen isminizi girin.");
+  const handleLogin = async () => {
+    if (!email.trim() || !password.trim()) {
+      setError("Email ve şifre gerekli");
       return;
     }
-    onSubmit(trimmed);
+
+    setLoading(true);
+    setError("");
+
+    try {
+      const result = await apiLogin(email.trim(), password);
+      if (result.basarili) {
+        await AsyncStorage.setItem("token", result.token);
+        onLogin(result.token, result.kullanici);
+      } else {
+        setError(result.hata || "Giriş başarısız");
+      }
+    } catch (err) {
+      console.error("Login error:", err);
+      setError("Sunucuya bağlanılamadı");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
-    <View style={styles.nameContainer}>
-      <View style={styles.bgCircle} />
-      <View style={styles.bgCircleAlt} />
+    <View style={styles.loginContainer}>
+      <View style={styles.loginCard}>
+        <Text style={styles.loginTitle}>📋 Yoklama Sistemi</Text>
+        <Text style={styles.loginSubtitle}>Yüz tanıma ile yoklama</Text>
 
-      <View style={styles.nameContent}>
-        <TouchableOpacity style={styles.backButton} onPress={onBack}>
-          <Text style={styles.backButtonText}>← Geri</Text>
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+        <TextInput
+          style={styles.input}
+          placeholder="Email"
+          placeholderTextColor={COLORS.muted}
+          value={email}
+          onChangeText={setEmail}
+          keyboardType="email-address"
+          autoCapitalize="none"
+        />
+
+        <TextInput
+          style={styles.input}
+          placeholder="Şifre"
+          placeholderTextColor={COLORS.muted}
+          value={password}
+          onChangeText={setPassword}
+          secureTextEntry
+        />
+
+        <TouchableOpacity
+          style={[styles.loginButton, loading && styles.buttonDisabled]}
+          onPress={handleLogin}
+          disabled={loading}
+        >
+          {loading ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.loginButtonText}>Giriş Yap</Text>
+          )}
         </TouchableOpacity>
 
-        <Text style={styles.nameTitle}>Isim Giriniz</Text>
-        <Text style={styles.nameSubtitle}>
-          Yuz kaydinda kullanilacak ismi girin
+        <Text style={styles.hintText}>
+          Test: ogretmen@okul.com / 123456{"\n"}
+          veya: ogrenci@okul.com / 123456
         </Text>
+      </View>
+    </View>
+  );
+}
 
-        <View style={styles.inputCard}>
-          <TextInput
-            value={name}
-            onChangeText={setName}
-            placeholder="Isminiz"
-            placeholderTextColor={COLORS.muted}
-            style={styles.nameInput}
-            autoFocus={true}
-            returnKeyType="next"
-            onSubmitEditing={handleSubmit}
-          />
+// Teacher Dashboard
+function TeacherDashboard({ user, token, onLogout }) {
+  const [courses, setCourses] = useState([]);
+  const [activeSession, setActiveSession] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-          <TouchableOpacity
-            style={[styles.submitButton, !name.trim() && styles.submitButtonDisabled]}
-            onPress={handleSubmit}
-            disabled={!name.trim()}
-          >
-            <Text style={styles.submitButtonText}>Devam →</Text>
+  const loadData = useCallback(async () => {
+    try {
+      const [coursesRes, activeRes] = await Promise.all([
+        apiGetTeacherCourses(token),
+        apiGetActiveAttendance(token),
+      ]);
+
+      if (coursesRes.basarili) {
+        setCourses(coursesRes.dersler);
+      }
+      if (activeRes.basarili) {
+        setActiveSession(activeRes.aktif_oturum);
+      }
+    } catch (err) {
+      console.error("Load error:", err);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    loadData();
+    const interval = setInterval(loadData, 5000); // Her 5 saniyede güncelle
+    return () => clearInterval(interval);
+  }, [loadData]);
+
+  const handleStartAttendance = async (courseId) => {
+    try {
+      const result = await apiStartAttendance(token, courseId);
+      if (result.basarili) {
+        Alert.alert("Başarılı", result.mesaj);
+        loadData();
+      } else {
+        Alert.alert("Hata", result.hata);
+      }
+    } catch (err) {
+      Alert.alert("Hata", "İşlem başarısız");
+    }
+  };
+
+  const handleEndAttendance = async () => {
+    if (!activeSession) return;
+
+    try {
+      const result = await apiEndAttendance(token, activeSession.oturum_id);
+      if (result.basarili) {
+        Alert.alert("Başarılı", `${result.mesaj}\nKatılımcı: ${result.katilimci_sayisi}`);
+        loadData();
+      } else {
+        Alert.alert("Hata", result.hata);
+      }
+    } catch (err) {
+      Alert.alert("Hata", "İşlem başarısız");
+    }
+  };
+
+  if (loading) {
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" color={COLORS.accent} />
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>👨‍🏫 Merhaba, {user.ad_soyad}</Text>
+        <TouchableOpacity onPress={onLogout}>
+          <Text style={styles.logoutText}>Çıkış</Text>
+        </TouchableOpacity>
+      </View>
+
+      {activeSession ? (
+        <View style={styles.activeSessionCard}>
+          <Text style={styles.activeSessionTitle}>🟢 Aktif Yoklama</Text>
+          <Text style={styles.activeSessionCourse}>{activeSession.ders_adi}</Text>
+          <Text style={styles.activeSessionCount}>
+            Katılan: {activeSession.katilimci_sayisi} öğrenci
+          </Text>
+
+          {activeSession.katilimcilar?.length > 0 && (
+            <View style={styles.participantsList}>
+              {activeSession.katilimcilar.map((k, i) => (
+                <Text key={i} style={styles.participantItem}>
+                  ✓ {k.ad_soyad} - {k.saat}
+                </Text>
+              ))}
+            </View>
+          )}
+
+          <TouchableOpacity style={styles.endButton} onPress={handleEndAttendance}>
+            <Text style={styles.endButtonText}>Yoklamayı Bitir</Text>
           </TouchableOpacity>
         </View>
-      </View>
-    </View>
-  );
-}
-
-// Kayıt Kamera Ekranı
-function RegisterCameraScreen({ personName, onComplete, onBack, refreshStats }) {
-  const cameraRef = useRef(null);
-  const [cameraReady, setCameraReady] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState("Kamera hazirlaniyor...");
-  const [statusType, setStatusType] = useState("info");
-
-  useEffect(() => {
-    if (cameraReady) {
-      setStatus("Hazir. Kameraya bakin ve Kaydet'e basin.");
-      setStatusType("info");
-    }
-  }, [cameraReady]);
-
-  const handleRegister = useCallback(async () => {
-    if (busy) return;
-    if (!cameraReady || !cameraRef.current) {
-      setStatus("Kamera hazir degil, bekleyin.");
-      setStatusType("error");
-      return;
-    }
-
-    setBusy(true);
-    setStatus("Fotograf cekiliyor...");
-    setStatusType("info");
-
-    try {
-      // Fotoğraf çek
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.8 });
-      console.log("Fotograf cekildi:", photo?.uri);
-
-      if (!photo || !photo.uri) {
-        setStatus("Fotograf alinamadi.");
-        setStatusType("error");
-        setBusy(false);
-        return;
-      }
-
-      // Sunucuya gönder
-      setStatus("Sunucuya gonderiliyor...");
-
-      try {
-        const result = await apiRegister(personName, photo.uri);
-        console.log("API sonucu:", result);
-
-        if (result.success) {
-          setStatus(`✅ ${result.message}`);
-          setStatusType("success");
-          refreshStats();
-
-          // 1.5 saniye sonra ana menüye dön
-          setTimeout(() => {
-            onComplete();
-          }, 1500);
-        } else {
-          setStatus(`❌ ${result.error}`);
-          setStatusType("error");
-          setBusy(false);
-        }
-      } catch (apiErr) {
-        console.error("API hatasi:", apiErr);
-        setStatus(`Sunucu hatasi: ${apiErr.message}`);
-        setStatusType("error");
-        setBusy(false);
-      }
-
-    } catch (err) {
-      console.error("Beklenmeyen hata:", err);
-      setStatus(`Hata: ${err.message}`);
-      setStatusType("error");
-      setBusy(false);
-    }
-  }, [busy, cameraReady, personName, onComplete, refreshStats]);
-
-  return (
-    <View style={styles.cameraContainer}>
-      <View style={styles.cameraHeader}>
-        <TouchableOpacity style={styles.backButton} onPress={onBack}>
-          <Text style={styles.backButtonText}>← Iptal</Text>
-        </TouchableOpacity>
-        <Text style={styles.cameraTitle}>Kayit: {personName}</Text>
-      </View>
-
-      <View style={styles.cameraWrapper}>
-        <CameraView
-          ref={cameraRef}
-          style={styles.fullCamera}
-          facing="front"
-          onCameraReady={() => setCameraReady(true)}
-        />
-      </View>
-
-      <View style={styles.cameraBottom}>
-        <View style={[
-          styles.statusBadge,
-          statusType === "success" && styles.statusBadgeSuccess,
-          statusType === "error" && styles.statusBadgeError,
-        ]}>
-          <Text style={styles.statusBadgeText}>{status}</Text>
+      ) : (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Derslerim</Text>
+          {courses.length === 0 ? (
+            <Text style={styles.emptyText}>Henüz ders atanmamış</Text>
+          ) : (
+            <FlatList
+              data={courses}
+              keyExtractor={(item) => item.id.toString()}
+              refreshControl={
+                <RefreshControl refreshing={refreshing} onRefresh={() => {
+                  setRefreshing(true);
+                  loadData();
+                }} />
+              }
+              renderItem={({ item }) => (
+                <View style={styles.courseCard}>
+                  <View style={styles.courseInfo}>
+                    <Text style={styles.courseName}>{item.ad}</Text>
+                    <Text style={styles.courseCode}>{item.kod}</Text>
+                    <Text style={styles.courseStudents}>{item.ogrenci_sayisi} öğrenci</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.startButton}
+                    onPress={() => handleStartAttendance(item.id)}
+                  >
+                    <Text style={styles.startButtonText}>Yoklama Başlat</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            />
+          )}
         </View>
-
-        <TouchableOpacity
-          style={[styles.captureButton, busy && styles.captureButtonDisabled]}
-          onPress={handleRegister}
-          disabled={busy}
-        >
-          <Text style={styles.captureButtonText}>
-            {busy ? "Kaydediliyor..." : "📸 Kaydet"}
-          </Text>
-        </TouchableOpacity>
-      </View>
+      )}
     </View>
   );
 }
 
-// Tanıma Kamera Ekranı
-function RecognizeCameraScreen({ onBack }) {
-  const cameraRef = useRef(null);
-  const [cameraReady, setCameraReady] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState("Kamera hazirlaniyor...");
-  const [statusType, setStatusType] = useState("info");
-  const [recognized, setRecognized] = useState(null);
-  const [confidence, setConfidence] = useState(null);
+// Student Dashboard
+function StudentDashboard({ user, token, onLogout }) {
+  const [sessions, setSessions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [joiningSession, setJoiningSession] = useState(null);
+  const [cameraMode, setCameraMode] = useState(false);
+  const [selectedSession, setSelectedSession] = useState(null);
+
+  const loadData = useCallback(async () => {
+    try {
+      const result = await apiGetStudentActiveSessions(token);
+      if (result.basarili) {
+        setSessions(result.yoklamalar);
+      }
+    } catch (err) {
+      console.error("Load error:", err);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [token]);
 
   useEffect(() => {
-    if (cameraReady) {
-      setStatus("Hazir. Kameraya bakin ve Tara'ya basin.");
-      setStatusType("info");
-    }
-  }, [cameraReady]);
+    loadData();
+    const interval = setInterval(loadData, 5000);
+    return () => clearInterval(interval);
+  }, [loadData]);
 
-  const handleRecognize = useCallback(async () => {
-    if (busy) return;
-    if (!cameraReady || !cameraRef.current) {
-      setStatus("Kamera hazir degil.");
-      setStatusType("error");
+  const handleJoinPress = (session) => {
+    if (session.katildi) {
+      Alert.alert("Bilgi", "Bu yoklamaya zaten katıldınız");
       return;
     }
+    setSelectedSession(session);
+    setCameraMode(true);
+  };
 
-    setBusy(true);
-    setStatus("Taraniyor...");
-    setStatusType("info");
-    setRecognized(null);
-    setConfidence(null);
+  if (loading) {
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator size="large" color={COLORS.accent} />
+      </View>
+    );
+  }
 
-    try {
-      // Fotoğraf çek
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.8 });
-
-      if (!photo || !photo.uri) {
-        setStatus("Fotograf alinamadi.");
-        setStatusType("error");
-        setBusy(false);
-        return;
-      }
-
-      // Sunucuya gönder
-      setStatus("Sunucu analiz ediyor...");
-
-      try {
-        const result = await apiRecognize(photo.uri);
-        console.log("Tanima sonucu:", result);
-
-        if (result.success) {
-          if (result.recognized) {
-            setRecognized(result.name);
-            setConfidence(result.confidence);
-            setStatus(`✅ ${result.message}`);
-            setStatusType("success");
-          } else {
-            setRecognized(null);
-            setStatus("❓ Yuz taninamadi");
-            setStatusType("error");
-          }
-        } else {
-          setStatus(`❌ ${result.error}`);
-          setStatusType("error");
-        }
-      } catch (apiErr) {
-        console.error("API hatasi:", apiErr);
-        setStatus(`Sunucu hatasi: ${apiErr.message}`);
-        setStatusType("error");
-      }
-
-    } catch (err) {
-      console.error("Hata:", err);
-      setStatus(`Hata: ${err.message}`);
-      setStatusType("error");
-    } finally {
-      setBusy(false);
-    }
-  }, [busy, cameraReady]);
+  if (cameraMode && selectedSession) {
+    return (
+      <StudentCameraScreen
+        token={token}
+        session={selectedSession}
+        onComplete={() => {
+          setCameraMode(false);
+          setSelectedSession(null);
+          loadData();
+        }}
+        onBack={() => {
+          setCameraMode(false);
+          setSelectedSession(null);
+        }}
+      />
+    );
+  }
 
   return (
-    <View style={styles.cameraContainer}>
-      <View style={styles.cameraHeader}>
-        <TouchableOpacity style={styles.backButton} onPress={onBack}>
-          <Text style={styles.backButtonText}>← Geri</Text>
+    <View style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>👨‍🎓 Merhaba, {user.ad_soyad}</Text>
+        <TouchableOpacity onPress={onLogout}>
+          <Text style={styles.logoutText}>Çıkış</Text>
         </TouchableOpacity>
-        <Text style={styles.cameraTitle}>Yuz Tarama</Text>
       </View>
 
-      <View style={styles.cameraWrapper}>
-        <CameraView
-          ref={cameraRef}
-          style={styles.fullCamera}
-          facing="front"
-          onCameraReady={() => setCameraReady(true)}
-        />
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Aktif Yoklamalar</Text>
 
-        {recognized && (
-          <View style={styles.recognizedOverlay}>
-            <Text style={styles.recognizedName}>{recognized}</Text>
-            {confidence && (
-              <Text style={styles.recognizedConfidence}>
-                Guven: %{confidence}
-              </Text>
-            )}
+        {sessions.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyIcon}>📭</Text>
+            <Text style={styles.emptyText}>Şu an aktif yoklama yok</Text>
+            <Text style={styles.emptyHint}>Öğretmeniniz yoklama başlattığında burada görünecek</Text>
           </View>
+        ) : (
+          <FlatList
+            data={sessions}
+            keyExtractor={(item) => item.oturum_id.toString()}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={() => {
+                setRefreshing(true);
+                loadData();
+              }} />
+            }
+            renderItem={({ item }) => (
+              <View style={[styles.sessionCard, item.katildi && styles.sessionCardJoined]}>
+                <View style={styles.sessionInfo}>
+                  <Text style={styles.sessionCourse}>{item.ders_adi}</Text>
+                  <Text style={styles.sessionTeacher}>{item.ogretmen_adi}</Text>
+                </View>
+                <TouchableOpacity
+                  style={[
+                    styles.joinButton,
+                    item.katildi && styles.joinButtonDone,
+                  ]}
+                  onPress={() => handleJoinPress(item)}
+                  disabled={item.katildi}
+                >
+                  <Text style={styles.joinButtonText}>
+                    {item.katildi ? "✓ Katıldın" : "Katıl"}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          />
         )}
       </View>
+    </View>
+  );
+}
+
+// Student Camera Screen
+function StudentCameraScreen({ token, session, onComplete, onBack }) {
+  const cameraRef = useRef(null);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState("Kamera hazırlanıyor...");
+  const [statusType, setStatusType] = useState("info");
+
+  useEffect(() => {
+    if (cameraReady) {
+      setStatus("Yüzünüzü kameraya gösterin");
+      setStatusType("info");
+    }
+  }, [cameraReady]);
+
+  const handleCapture = useCallback(async () => {
+    if (busy || !cameraReady || !cameraRef.current) return;
+
+    setBusy(true);
+    setStatus("Fotoğraf çekiliyor...");
+
+    try {
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.8 });
+
+      if (!photo?.uri) {
+        setStatus("Fotoğraf alınamadı");
+        setStatusType("error");
+        setBusy(false);
+        return;
+      }
+
+      setStatus("Yüz doğrulanıyor...");
+
+      const result = await apiJoinAttendance(token, session.oturum_id, photo.uri);
+
+      if (result.basarili) {
+        setStatus(`✅ ${result.mesaj}`);
+        setStatusType("success");
+        setTimeout(onComplete, 1500);
+      } else {
+        setStatus(`❌ ${result.hata}`);
+        setStatusType("error");
+        setBusy(false);
+      }
+    } catch (err) {
+      console.error("Capture error:", err);
+      setStatus("Bir hata oluştu");
+      setStatusType("error");
+      setBusy(false);
+    }
+  }, [busy, cameraReady, token, session, onComplete]);
+
+  return (
+    <View style={styles.cameraContainer}>
+      <View style={styles.cameraHeader}>
+        <TouchableOpacity onPress={onBack}>
+          <Text style={styles.backText}>← Geri</Text>
+        </TouchableOpacity>
+        <Text style={styles.cameraTitle}>{session.ders_adi}</Text>
+      </View>
+
+      <View style={styles.cameraWrapper}>
+        <CameraView
+          ref={cameraRef}
+          style={styles.camera}
+          facing="front"
+          onCameraReady={() => setCameraReady(true)}
+        />
+      </View>
 
       <View style={styles.cameraBottom}>
-        <View style={[
-          styles.statusBadge,
-          statusType === "success" && styles.statusBadgeSuccess,
-          statusType === "error" && styles.statusBadgeError,
-        ]}>
-          <Text style={styles.statusBadgeText}>{status}</Text>
+        <View
+          style={[
+            styles.statusBadge,
+            statusType === "success" && styles.statusSuccess,
+            statusType === "error" && styles.statusError,
+          ]}
+        >
+          <Text style={styles.statusText}>{status}</Text>
         </View>
 
         <TouchableOpacity
-          style={[styles.captureButton, styles.scanButton, busy && styles.captureButtonDisabled]}
-          onPress={handleRecognize}
-          disabled={busy}
+          style={[styles.captureButton, busy && styles.buttonDisabled]}
+          onPress={handleCapture}
+          disabled={busy || !cameraReady}
         >
           <Text style={styles.captureButtonText}>
-            {busy ? "Taraniyor..." : "🔍 Tara"}
+            {busy ? "İşleniyor..." : "📸 Yoklamaya Katıl"}
           </Text>
         </TouchableOpacity>
       </View>
@@ -434,113 +570,97 @@ function RecognizeCameraScreen({ onBack }) {
 
 export default function App() {
   const [permission, requestPermission] = useCameraPermissions();
-  const [screen, setScreen] = useState("home");
-  const [currentName, setCurrentName] = useState("");
-  const [stats, setStats] = useState({ samples: 0, people: 0, connected: false });
+  const [token, setToken] = useState(null);
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  // Sunucu durumunu kontrol et
-  const refreshStats = useCallback(async () => {
-    try {
-      const data = await apiGetStatus();
-      setStats({
-        samples: data.registered_faces || 0,
-        people: data.unique_people || 0,
-        connected: true,
-      });
-    } catch (err) {
-      console.log("Sunucu baglantisi yok:", err.message);
-      setStats(prev => ({ ...prev, connected: false }));
-    }
+  // Check for existing token on app start
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const savedToken = await AsyncStorage.getItem("token");
+        if (savedToken) {
+          const result = await apiGetMe(savedToken);
+          if (result.basarili) {
+            setToken(savedToken);
+            setUser(result.kullanici);
+          } else {
+            await AsyncStorage.removeItem("token");
+          }
+        }
+      } catch (err) {
+        console.error("Auth check error:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    checkAuth();
   }, []);
 
-  useEffect(() => {
-    refreshStats();
-    // Her 10 saniyede bir kontrol et
-    const interval = setInterval(refreshStats, 10000);
-    return () => clearInterval(interval);
-  }, [refreshStats]);
+  const handleLogin = (newToken, userData) => {
+    setToken(newToken);
+    setUser(userData);
+  };
 
-  // İzin kontrolü
-  if (!permission) {
+  const handleLogout = async () => {
+    await AsyncStorage.removeItem("token");
+    setToken(null);
+    setUser(null);
+  };
+
+  // Show loading
+  if (loading) {
     return (
       <SafeAreaProvider>
-        <SafeAreaView style={styles.container}>
-          <View style={styles.loading}>
-            <ActivityIndicator size="large" color={COLORS.accent} />
-            <Text style={styles.loadingText}>Kamera izinleri kontrol ediliyor...</Text>
-          </View>
+        <SafeAreaView style={styles.centered}>
+          <ActivityIndicator size="large" color={COLORS.accent} />
+          <Text style={styles.loadingText}>Yükleniyor...</Text>
         </SafeAreaView>
       </SafeAreaProvider>
     );
   }
 
-  if (!permission.granted) {
+  // Show login if not authenticated
+  if (!token || !user) {
     return (
       <SafeAreaProvider>
         <SafeAreaView style={styles.container}>
-          <View style={styles.loading}>
-            <Text style={styles.loadingText}>Kamera izni gerekli.</Text>
-            <TouchableOpacity style={styles.primaryButton} onPress={requestPermission}>
-              <Text style={styles.primaryButtonText}>Izni Ver</Text>
-            </TouchableOpacity>
-          </View>
+          <LoginScreen onLogin={handleLogin} />
         </SafeAreaView>
       </SafeAreaProvider>
     );
   }
 
-  // Ekran yönlendirmesi
-  let content;
-
-  switch (screen) {
-    case "enterName":
-      content = (
-        <EnterNameScreen
-          onSubmit={(name) => {
-            setCurrentName(name);
-            setScreen("registerCamera");
-          }}
-          onBack={() => setScreen("home")}
-        />
-      );
-      break;
-
-    case "registerCamera":
-      content = (
-        <RegisterCameraScreen
-          personName={currentName}
-          refreshStats={refreshStats}
-          onComplete={() => {
-            setCurrentName("");
-            setScreen("home");
-          }}
-          onBack={() => setScreen("home")}
-        />
-      );
-      break;
-
-    case "recognizeCamera":
-      content = (
-        <RecognizeCameraScreen
-          onBack={() => setScreen("home")}
-        />
-      );
-      break;
-
-    default:
-      content = (
-        <HomeScreen
-          stats={stats}
-          onRegister={() => setScreen("enterName")}
-          onRecognize={() => setScreen("recognizeCamera")}
-        />
-      );
+  // Camera permission check for students
+  if (user.rol === "ogrenci" && !permission?.granted) {
+    return (
+      <SafeAreaProvider>
+        <SafeAreaView style={styles.centered}>
+          <Text style={styles.permissionText}>Yoklama için kamera izni gerekli</Text>
+          <TouchableOpacity style={styles.permissionButton} onPress={requestPermission}>
+            <Text style={styles.permissionButtonText}>İzin Ver</Text>
+          </TouchableOpacity>
+        </SafeAreaView>
+      </SafeAreaProvider>
+    );
   }
 
+  // Show appropriate dashboard based on role
   return (
     <SafeAreaProvider>
-      <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
-        {content}
+      <SafeAreaView style={styles.container}>
+        {user.rol === "ogretmen" ? (
+          <TeacherDashboard user={user} token={token} onLogout={handleLogout} />
+        ) : user.rol === "ogrenci" ? (
+          <StudentDashboard user={user} token={token} onLogout={handleLogout} />
+        ) : (
+          <View style={styles.centered}>
+            <Text>Admin paneli yakında...</Text>
+            <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+              <Text style={styles.logoutButtonText}>Çıkış Yap</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </SafeAreaView>
     </SafeAreaProvider>
   );
@@ -553,188 +673,272 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.background,
   },
-
-  // Loading
-  loading: {
+  centered: {
     flex: 1,
-    alignItems: "center",
     justifyContent: "center",
-    padding: 24,
+    alignItems: "center",
+    padding: 20,
   },
   loadingText: {
     marginTop: 12,
-    fontSize: 15,
-    color: COLORS.text,
-    textAlign: "center",
-    fontFamily: BODY_FONT,
-  },
-
-  // Background decorations
-  bgCircle: {
-    position: "absolute",
-    width: 260,
-    height: 260,
-    borderRadius: 130,
-    backgroundColor: "#f0d7b7",
-    top: -70,
-    right: -90,
-    opacity: 0.6,
-  },
-  bgCircleAlt: {
-    position: "absolute",
-    width: 220,
-    height: 220,
-    borderRadius: 110,
-    backgroundColor: "#cfe3d8",
-    bottom: -80,
-    left: -90,
-    opacity: 0.6,
-  },
-
-  // Home Screen
-  homeContainer: {
-    flex: 1,
-  },
-  homeContent: {
-    flex: 1,
-    paddingHorizontal: 24,
-    paddingTop: 60,
-  },
-  homeTitle: {
-    fontSize: 36,
-    color: COLORS.text,
-    fontFamily: TITLE_FONT,
-    textAlign: "center",
-  },
-  homeSubtitle: {
-    marginTop: 8,
-    fontSize: 15,
     color: COLORS.muted,
-    fontFamily: BODY_FONT,
-    textAlign: "center",
   },
-  statsCard: {
-    marginTop: 24,
-    padding: 16,
-    borderRadius: 14,
+
+  // Login
+  loginContainer: {
+    flex: 1,
+    justifyContent: "center",
+    padding: 20,
+  },
+  loginCard: {
     backgroundColor: COLORS.card,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    alignItems: "center",
-  },
-  statsText: {
-    fontSize: 14,
-    color: COLORS.muted,
-    fontFamily: BODY_FONT,
-  },
-  bigButton: {
-    marginTop: 24,
-    padding: 24,
     borderRadius: 20,
-    backgroundColor: COLORS.accent,
-    alignItems: "center",
+    padding: 24,
     shadowColor: "#000",
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
     elevation: 5,
   },
-  bigButtonSecondary: {
-    backgroundColor: COLORS.card,
-    borderWidth: 2,
-    borderColor: COLORS.accent,
-  },
-  bigButtonIcon: {
-    fontSize: 40,
-    marginBottom: 8,
-  },
-  bigButtonText: {
-    fontSize: 20,
-    color: "#fff",
-    fontFamily: TITLE_FONT,
-  },
-  bigButtonHint: {
-    marginTop: 4,
-    fontSize: 13,
-    color: "rgba(255,255,255,0.8)",
-    fontFamily: BODY_FONT,
-  },
-
-  // Name Screen
-  nameContainer: {
-    flex: 1,
-  },
-  nameContent: {
-    flex: 1,
-    paddingHorizontal: 24,
-    paddingTop: 20,
-  },
-  backButton: {
-    alignSelf: "flex-start",
-    paddingVertical: 8,
-    paddingHorizontal: 4,
-  },
-  backButtonText: {
-    fontSize: 16,
-    color: COLORS.accent,
-    fontFamily: BODY_FONT,
-  },
-  nameTitle: {
-    marginTop: 40,
+  loginTitle: {
     fontSize: 28,
+    fontWeight: "bold",
+    textAlign: "center",
     color: COLORS.text,
-    fontFamily: TITLE_FONT,
-    textAlign: "center",
   },
-  nameSubtitle: {
-    marginTop: 8,
+  loginSubtitle: {
     fontSize: 14,
-    color: COLORS.muted,
-    fontFamily: BODY_FONT,
     textAlign: "center",
+    color: COLORS.muted,
+    marginTop: 4,
+    marginBottom: 24,
   },
-  inputCard: {
-    marginTop: 40,
-    padding: 20,
-    borderRadius: 18,
-    backgroundColor: COLORS.card,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 3,
-  },
-  nameInput: {
+  input: {
     borderWidth: 1,
     borderColor: COLORS.border,
     borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 18,
-    color: COLORS.text,
-    fontFamily: BODY_FONT,
-    backgroundColor: "#fffefc",
-    textAlign: "center",
+    padding: 14,
+    fontSize: 16,
+    marginBottom: 12,
+    backgroundColor: "#fff",
   },
-  submitButton: {
-    marginTop: 20,
-    paddingVertical: 14,
-    borderRadius: 14,
+  loginButton: {
     backgroundColor: COLORS.accent,
+    borderRadius: 12,
+    padding: 16,
     alignItems: "center",
+    marginTop: 8,
   },
-  submitButtonDisabled: {
-    opacity: 0.5,
-  },
-  submitButtonText: {
-    fontSize: 18,
+  loginButtonText: {
     color: "#fff",
-    fontFamily: TITLE_FONT,
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  buttonDisabled: {
+    opacity: 0.6,
+  },
+  errorText: {
+    color: COLORS.error,
+    textAlign: "center",
+    marginBottom: 12,
+  },
+  hintText: {
+    marginTop: 16,
+    textAlign: "center",
+    color: COLORS.muted,
+    fontSize: 12,
   },
 
-  // Camera Screens
+  // Header
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 16,
+    backgroundColor: COLORS.card,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: "600",
+    color: COLORS.text,
+  },
+  logoutText: {
+    color: COLORS.error,
+    fontWeight: "500",
+  },
+
+  // Section
+  section: {
+    flex: 1,
+    padding: 16,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: "600",
+    color: COLORS.text,
+    marginBottom: 16,
+  },
+
+  // Course Card
+  courseCard: {
+    flexDirection: "row",
+    backgroundColor: COLORS.card,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  courseInfo: {
+    flex: 1,
+  },
+  courseName: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: COLORS.text,
+  },
+  courseCode: {
+    fontSize: 12,
+    color: COLORS.muted,
+    marginTop: 2,
+  },
+  courseStudents: {
+    fontSize: 12,
+    color: COLORS.muted,
+    marginTop: 4,
+  },
+  startButton: {
+    backgroundColor: COLORS.accent,
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  startButtonText: {
+    color: "#fff",
+    fontWeight: "600",
+    fontSize: 14,
+  },
+
+  // Active Session
+  activeSessionCard: {
+    margin: 16,
+    backgroundColor: COLORS.card,
+    borderRadius: 16,
+    padding: 20,
+    borderWidth: 2,
+    borderColor: COLORS.success,
+  },
+  activeSessionTitle: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: COLORS.success,
+  },
+  activeSessionCourse: {
+    fontSize: 24,
+    fontWeight: "bold",
+    color: COLORS.text,
+    marginTop: 8,
+  },
+  activeSessionCount: {
+    fontSize: 16,
+    color: COLORS.muted,
+    marginTop: 4,
+  },
+  participantsList: {
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+  },
+  participantItem: {
+    fontSize: 14,
+    color: COLORS.text,
+    paddingVertical: 4,
+  },
+  endButton: {
+    backgroundColor: COLORS.error,
+    borderRadius: 10,
+    padding: 14,
+    alignItems: "center",
+    marginTop: 16,
+  },
+  endButtonText: {
+    color: "#fff",
+    fontWeight: "600",
+  },
+
+  // Session Card (Student)
+  sessionCard: {
+    flexDirection: "row",
+    backgroundColor: COLORS.card,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    alignItems: "center",
+    borderWidth: 2,
+    borderColor: COLORS.warning,
+  },
+  sessionCardJoined: {
+    borderColor: COLORS.success,
+    opacity: 0.7,
+  },
+  sessionInfo: {
+    flex: 1,
+  },
+  sessionCourse: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: COLORS.text,
+  },
+  sessionTeacher: {
+    fontSize: 13,
+    color: COLORS.muted,
+    marginTop: 2,
+  },
+  joinButton: {
+    backgroundColor: COLORS.accent,
+    borderRadius: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+  },
+  joinButtonDone: {
+    backgroundColor: COLORS.success,
+  },
+  joinButtonText: {
+    color: "#fff",
+    fontWeight: "600",
+  },
+
+  // Empty State
+  emptyCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: 16,
+    padding: 32,
+    alignItems: "center",
+  },
+  emptyIcon: {
+    fontSize: 48,
+    marginBottom: 12,
+  },
+  emptyText: {
+    fontSize: 16,
+    color: COLORS.text,
+    fontWeight: "500",
+  },
+  emptyHint: {
+    fontSize: 13,
+    color: COLORS.muted,
+    marginTop: 8,
+    textAlign: "center",
+  },
+
+  // Camera
   cameraContainer: {
     flex: 1,
     backgroundColor: "#000",
@@ -742,97 +946,88 @@ const styles = StyleSheet.create({
   cameraHeader: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    padding: 16,
     backgroundColor: "rgba(0,0,0,0.6)",
+  },
+  backText: {
+    color: "#fff",
+    fontSize: 16,
   },
   cameraTitle: {
     flex: 1,
-    fontSize: 18,
     color: "#fff",
-    fontFamily: TITLE_FONT,
+    fontSize: 18,
+    fontWeight: "600",
     textAlign: "center",
-    marginRight: 60,
+    marginRight: 40,
   },
   cameraWrapper: {
     flex: 1,
-    position: "relative",
   },
-  fullCamera: {
+  camera: {
     flex: 1,
-  },
-  recognizedOverlay: {
-    position: "absolute",
-    bottom: 20,
-    left: 20,
-    right: 20,
-    padding: 16,
-    borderRadius: 14,
-    backgroundColor: "rgba(34, 197, 94, 0.9)",
-    alignItems: "center",
-  },
-  recognizedName: {
-    fontSize: 24,
-    color: "#fff",
-    fontFamily: TITLE_FONT,
-  },
-  recognizedConfidence: {
-    marginTop: 4,
-    fontSize: 14,
-    color: "rgba(255,255,255,0.9)",
-    fontFamily: BODY_FONT,
   },
   cameraBottom: {
     padding: 20,
     backgroundColor: "rgba(0,0,0,0.6)",
   },
   statusBadge: {
+    backgroundColor: "rgba(255,255,255,0.2)",
+    borderRadius: 10,
     padding: 12,
-    borderRadius: 12,
-    backgroundColor: "rgba(255,255,255,0.15)",
     marginBottom: 16,
   },
-  statusBadgeSuccess: {
+  statusSuccess: {
     backgroundColor: "rgba(34, 197, 94, 0.3)",
   },
-  statusBadgeError: {
+  statusError: {
     backgroundColor: "rgba(239, 68, 68, 0.3)",
   },
-  statusBadgeText: {
-    fontSize: 14,
+  statusText: {
     color: "#fff",
-    fontFamily: BODY_FONT,
     textAlign: "center",
+    fontSize: 14,
   },
   captureButton: {
-    paddingVertical: 16,
-    borderRadius: 16,
     backgroundColor: COLORS.accent,
+    borderRadius: 12,
+    padding: 16,
     alignItems: "center",
   },
-  scanButton: {
-    backgroundColor: "#3b82f6",
-  },
-  captureButtonDisabled: {
-    opacity: 0.5,
-  },
   captureButtonText: {
-    fontSize: 20,
     color: "#fff",
-    fontFamily: TITLE_FONT,
+    fontSize: 18,
+    fontWeight: "600",
   },
 
-  // Common
-  primaryButton: {
-    marginTop: 16,
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 14,
-    backgroundColor: COLORS.accent,
-  },
-  primaryButtonText: {
-    color: "#fff",
+  // Permission
+  permissionText: {
     fontSize: 16,
-    fontFamily: TITLE_FONT,
+    color: COLORS.text,
+    marginBottom: 16,
+    textAlign: "center",
+  },
+  permissionButton: {
+    backgroundColor: COLORS.accent,
+    borderRadius: 10,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+  },
+  permissionButtonText: {
+    color: "#fff",
+    fontWeight: "600",
+  },
+
+  // Logout
+  logoutButton: {
+    marginTop: 20,
+    backgroundColor: COLORS.error,
+    borderRadius: 10,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+  },
+  logoutButtonText: {
+    color: "#fff",
+    fontWeight: "600",
   },
 });
