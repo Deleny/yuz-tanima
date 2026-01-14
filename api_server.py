@@ -942,8 +942,131 @@ def get_teachers():
     return jsonify({"basarili": True, "ogretmenler": ogretmenler})
 
 
-# ==================== MAIN ====================
 
+# ==================== MOBILE COMPATIBILITY ENDPOINTS ====================
+# Bu endpointler mobil uygulamanın login olmadan test edilebilmesi içindir.
+# İleride mobil uygulamaya login ekranı eklenince kaldırılabilir.
+
+@app.route("/mobil/kayit", methods=["POST"])
+def mobile_register():
+    """Mobil uygulama için hızlı kayıt (Auth'sız)"""
+    name = request.form.get("name")
+    if not name:
+        return jsonify({"success": False, "error": "İsim gerekli"}), 400
+    
+    if "image" not in request.files:
+        return jsonify({"success": False, "error": "Resim gerekli"}), 400
+        
+    try:
+        # Resmi işle
+        resim_dosya = request.files["image"]
+        image_bytes = resim_dosya.read()
+        result = process_image(image_bytes)
+        
+        if result is None:
+            return jsonify({"success": False, "error": "Resim okunamadı"}), 400
+        
+        rgb, bgr = result
+        encoding, error = get_face_encoding(rgb)
+        
+        if error:
+            return jsonify({"success": False, "error": error}), 400
+            
+        encoding_bytes = pickle.dumps(encoding)
+        
+        # Kullanıcıyı oluştur veya güncelle
+        # Email unique olduğu için isme göre fake email oluşturuyoruz
+        safe_name = "".join(c for c in name if c.isalnum()).lower()
+        fake_email = f"{safe_name}@mobile.com"
+        
+        existing = query_db("SELECT id FROM kullanicilar WHERE email = %s", (fake_email,), one=True)
+        
+        if existing:
+            query_db(
+                "UPDATE kullanicilar SET ad_soyad = %s, yuz_encoding = %s WHERE id = %s",
+                (name, encoding_bytes, existing["id"]),
+                commit=True
+            )
+            msg = "Kullanıcı güncellendi"
+        else:
+            sifre_hash = hash_password("123456")
+            query_db(
+                "INSERT INTO kullanicilar (email, sifre_hash, ad_soyad, rol, onaylandi, yuz_encoding) VALUES (%s, %s, %s, 'ogrenci', TRUE, %s)",
+                (fake_email, sifre_hash, name, encoding_bytes),
+                commit=True
+            )
+            msg = "Kullanıcı oluşturuldu"
+            
+        # Resmi kaydet (Opsiyonel)
+        person_dir = IMAGES_DIR / safe_name
+        person_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        cv2.imwrite(str(person_dir / f"{timestamp}.jpg"), bgr)
+        
+        return jsonify({"success": True, "message": msg})
+        
+    except Exception as e:
+        print(f"Mobil kayıt hatası: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/mobil/tanima", methods=["POST"])
+def mobile_recognize():
+    """Mobil uygulama için kimlik tespiti (1-N)"""
+    if "image" not in request.files:
+        return jsonify({"success": False, "error": "Resim gerekli"}), 400
+        
+    try:
+        resim_dosya = request.files["image"]
+        image_bytes = resim_dosya.read()
+        result = process_image(image_bytes)
+        
+        if result is None:
+            return jsonify({"success": False, "error": "Resim okunamadı"}), 400
+            
+        rgb, _ = result
+        # Yüzü bul
+        locations = face_recognition.face_locations(rgb)
+        if not locations:
+            return jsonify({"success": False, "error": "Yüz bulunamadı"}), 400
+            
+        unknown_encoding = face_recognition.face_encodings(rgb, locations)[0]
+        
+        # Tüm kayıtlı yüzleri getir
+        kullanicilar = query_db("SELECT ad_soyad, yuz_encoding FROM kullanicilar WHERE yuz_encoding IS NOT NULL")
+        
+        best_match = None
+        best_distance = TOLERANCE
+        
+        for k in kullanicilar:
+            known_encoding = pickle.loads(k["yuz_encoding"])
+            distance = face_recognition.face_distance([known_encoding], unknown_encoding)[0]
+            
+            if distance < best_distance:
+                best_distance = distance
+                best_match = k["ad_soyad"]
+        
+        if best_match:
+            confidence = round((1 - best_distance) * 100, 1)
+            return jsonify({
+                "success": True,
+                "recognized": True,
+                "name": best_match,
+                "confidence": confidence,
+                "message": f"Tanındı: {best_match}"
+            })
+        else:
+            return jsonify({
+                "success": True,
+                "recognized": False,
+                "message": "Tanınamadı"
+            })
+            
+    except Exception as e:
+        print(f"Mobil tanıma hatası: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+# ==================== MAIN ====================
 if __name__ == "__main__":
     print("=" * 60)
     print("Yoklama Sistemi API Sunucusu v2.0")
