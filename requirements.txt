@@ -1,0 +1,9 @@
+# Yoklama Sistemi Backend - Requirements
+flask>=3.0.0
+flask-cors>=4.0.0
+mysql-connector-python>=8.0.0
+pyjwt>=2.8.0
+bcrypt>=4.1.0
+opencv-python>=4.8.0
+face_recognition>=1.3.0
+numpy>=1.24.0

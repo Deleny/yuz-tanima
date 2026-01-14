@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+venv/
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+yuz_verileri/
+face_data/
+*.pkl
+
+# Logs
+*.log
+
+# Mobile
+mobile/node_modules/
+mobile/.expo/
+mobile/dist/

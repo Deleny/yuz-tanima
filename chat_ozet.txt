@@ -1,0 +1,42 @@
+CHAT OZETI - BITIRME PROJESI
+
+KONU:
+- Python (Tkinter + OpenCV + face_recognition) ile yuz kaydetme ve yuz tanima uygulamasi.
+- Arayuz: Yuz Kaydi / Yuz Tanima butonlari, kayit asamasinda saga-sola-yukari-asagi bakislar.
+- Tanimada taninan kisi icin "Hosgeldin <isim>" mesaji.
+
+PYTHON UYGULAMASI (fcrcgnt.py):
+- encodings.pkl ile yuz encoding verileri saklaniyor.
+- face_data/ klasorune kayit goruntuleri kaydediliyor.
+- Kamera acilmiyor ise hata gosteriliyor.
+- Tanimada CPU hizlandirma eklendi:
+  * Kamera cozunurlugu 640x480
+  * DOWNSCALE=0.25
+  * DETECT_EVERY_N=3 (her 3 karede bir tespit)
+  * number_of_times_to_upsample=0
+- GPU varsa otomatik CNN modeline gecmek icin dlib.DLIB_USE_CUDA kontrolu eklendi.
+
+GPU KONUSU:
+- dlib.DLIB_USE_CUDA False cikti.
+- nvidia-smi: NVIDIA GeForce GTX 960M gorunuyor.
+- CUDA Toolkit kurulu olmadigi icin nvcc bulunamadi.
+- Sonuc: GPU aktif etmek icin CUDA Toolkit + cuDNN + dlib kaynak derleme gerekiyor.
+- Kullanici GPU kurulumunu yapamiyor, bu nedenle CPU hizlandirma ile devam ediliyor.
+
+MOBIL PLAN:
+- Flutter tercih edildi (Expo/React yerine).
+- Flutter ortam bilgisi (ekip arkadasi):
+  * Flutter 3.38.4 stable
+  * Android SDK 36.1.0
+  * JDK 21 (Android Studio jbr)
+  * Emulator kullaniliyor
+
+ONAY DURUMU:
+- Flutter projesi icin onay bekleniyor.
+- Plan: repo icinde mobile/ klasoru altina basit menu ("Yuz Kaydet" ve "Yoklama Al") kurulacak.
+
+NOTLAR:
+- fcrcgnt.py calistirma: python fcrcgnt.py
+- Gerekli paketler: opencv-python, face_recognition, numpy (dlib CPU)
+
+CHAT KAYDI: Bu dosya ozet olarak paylasim icindir.
