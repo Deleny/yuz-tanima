@@ -34,66 +34,125 @@ const COLORS = {
 // ==================== API FUNCTIONS ====================
 
 async function apiLogin(email, password) {
-  const response = await fetch(`${API_BASE}/auth/giris`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, sifre: password }),
-  });
-  return await response.json();
+  try {
+    console.log("Login isteği gönderiliyor:", API_BASE);
+    const response = await fetch(`${API_BASE}/auth/giris`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, sifre: password }),
+    });
+    const text = await response.text();
+    console.log("Login yanıtı:", text.substring(0, 200));
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      console.error("JSON parse hatası:", e);
+      return { basarili: false, hata: "Sunucu yanıtı geçersiz" };
+    }
+  } catch (e) {
+    console.error("Login fetch hatası:", e);
+    return { basarili: false, hata: "Sunucuya bağlanılamadı" };
+  }
 }
 
 async function apiGetMe(token) {
-  const response = await fetch(`${API_BASE}/auth/ben`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  return await response.json();
+  try {
+    const response = await fetch(`${API_BASE}/auth/ben`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const text = await response.text();
+    console.log("GetMe yanıtı:", text.substring(0, 200));
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      return { basarili: false };
+    }
+  } catch (e) {
+    console.error("GetMe fetch hatası:", e);
+    return { basarili: false };
+  }
 }
 
 // Teacher APIs
 async function apiGetTeacherCourses(token) {
-  const response = await fetch(`${API_BASE}/ogretmen/derslerim`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  return await response.json();
+  try {
+    console.log("Öğretmen dersleri isteniyor...");
+    const response = await fetch(`${API_BASE}/ogretmen/derslerim`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const text = await response.text();
+    console.log("Dersler yanıtı:", text.substring(0, 200));
+    return JSON.parse(text);
+  } catch (e) {
+    console.error("Dersler hatası:", e);
+    return { basarili: false, dersler: [] };
+  }
 }
 
 async function apiStartAttendance(token, courseId) {
-  const response = await fetch(`${API_BASE}/ogretmen/yoklama/baslat`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ ders_id: courseId }),
-  });
-  return await response.json();
+  try {
+    const response = await fetch(`${API_BASE}/ogretmen/yoklama/baslat`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ ders_id: courseId }),
+    });
+    const text = await response.text();
+    return JSON.parse(text);
+  } catch (e) {
+    console.error("Yoklama başlatma hatası:", e);
+    return { basarili: false, hata: "İşlem başarısız" };
+  }
 }
 
 async function apiEndAttendance(token, sessionId) {
-  const response = await fetch(`${API_BASE}/ogretmen/yoklama/bitir`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ oturum_id: sessionId }),
-  });
-  return await response.json();
+  try {
+    const response = await fetch(`${API_BASE}/ogretmen/yoklama/bitir`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ oturum_id: sessionId }),
+    });
+    const text = await response.text();
+    return JSON.parse(text);
+  } catch (e) {
+    console.error("Yoklama bitirme hatası:", e);
+    return { basarili: false, hata: "İşlem başarısız" };
+  }
 }
 
 async function apiGetActiveAttendance(token) {
-  const response = await fetch(`${API_BASE}/ogretmen/yoklama/aktif`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  return await response.json();
+  try {
+    console.log("Aktif yoklama kontrol ediliyor...");
+    const response = await fetch(`${API_BASE}/ogretmen/yoklama/aktif`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const text = await response.text();
+    console.log("Aktif yoklama yanıtı:", text.substring(0, 200));
+    return JSON.parse(text);
+  } catch (e) {
+    console.error("Aktif yoklama hatası:", e);
+    return { basarili: false, aktif_oturum: null };
+  }
 }
 
 // Student APIs
 async function apiGetStudentActiveSessions(token) {
-  const response = await fetch(`${API_BASE}/ogrenci/aktif-yoklamalar`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  return await response.json();
+  try {
+    const response = await fetch(`${API_BASE}/ogrenci/aktif-yoklamalar`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const text = await response.text();
+    console.log("Öğrenci yoklamaları yanıtı:", text.substring(0, 200));
+    return JSON.parse(text);
+  } catch (e) {
+    console.error("Öğrenci yoklamaları hatası:", e);
+    return { basarili: false, yoklamalar: [] };
+  }
 }
 
 async function apiJoinAttendance(token, sessionId, imageUri) {

@@ -5,13 +5,21 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
-    "platforms": ["ios", "android"],
+    "platforms": [
+      "ios",
+      "android"
+    ],
     "android": {
-      "permissions": ["CAMERA"]
+      "permissions": [
+        "CAMERA"
+      ]
     },
     "ios": {
       "infoPlist": {
-        "NSCameraUsageDescription": "Kamera yuz kaydi ve tanima icin kullanilir."
+        "NSCameraUsageDescription": "Kamera yuz kaydi ve tanima icin kullanilir.",
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
       }
     }
   }

@@ -950,7 +950,7 @@ def get_teachers():
 @role_required("ogretmen")
 def get_teacher_courses():
     """Öğretmenin kendi derslerini listele"""
-    ogretmen_id = request.kullanici["id"]
+    ogretmen_id = g.kullanici_id
     
     dersler = query_db("""
         SELECT d.id, d.ad, d.kod,
@@ -978,7 +978,7 @@ def get_teacher_courses():
 @role_required("ogretmen")
 def teacher_start_attendance():
     """Öğretmen için yoklama başlat"""
-    ogretmen_id = request.kullanici["id"]
+    ogretmen_id = g.kullanici_id
     data = request.get_json() or {}
     ders_id = data.get("ders_id")
     
@@ -1015,7 +1015,7 @@ def teacher_start_attendance():
 @role_required("ogretmen")
 def teacher_end_attendance():
     """Öğretmen için yoklama bitir"""
-    ogretmen_id = request.kullanici["id"]
+    ogretmen_id = g.kullanici_id
     data = request.get_json() or {}
     oturum_id = data.get("oturum_id")
     
@@ -1057,7 +1057,7 @@ def teacher_end_attendance():
 @role_required("ogretmen")
 def teacher_active_attendance():
     """Öğretmenin aktif yoklaması ve katılımcıları"""
-    ogretmen_id = request.kullanici["id"]
+    ogretmen_id = g.kullanici_id
     
     # Aktif oturumu bul
     oturum = query_db("""
@@ -1104,7 +1104,7 @@ def teacher_active_attendance():
 @role_required("ogrenci")
 def get_student_courses():
     """Öğrencinin kayıtlı olduğu dersler"""
-    ogrenci_id = request.kullanici["id"]
+    ogrenci_id = g.kullanici_id
     
     dersler = query_db("""
         SELECT d.id, d.ad, d.kod, k.ad_soyad as ogretmen_adi
@@ -1123,7 +1123,7 @@ def get_student_courses():
 @role_required("ogrenci")
 def get_student_active_sessions():
     """Öğrencinin katılabileceği aktif yoklamalar"""
-    ogrenci_id = request.kullanici["id"]
+    ogrenci_id = g.kullanici_id
     
     # Öğrencinin kayıtlı olduğu derslerdeki aktif yoklamaları getir
     aktif_yoklamalar = query_db("""
@@ -1162,7 +1162,7 @@ def get_student_active_sessions():
 @role_required("ogrenci")
 def student_join_attendance():
     """Öğrenci yüz doğrulaması ile yoklamaya katıl"""
-    ogrenci_id = request.kullanici["id"]
+    ogrenci_id = g.kullanici_id
     oturum_id = request.form.get("oturum_id")
     
     if not oturum_id:
